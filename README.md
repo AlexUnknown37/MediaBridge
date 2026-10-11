@@ -1,4 +1,5 @@
 # MediaBridge
+[Watch Tool in Use in Pacific Drive](https://youtu.be/P02ywl0pOp0)
 
 A tiny app for **Windows and Linux (including Steam Deck)** that lets **game mods** use your music. One file, no install needed (Windows: 4 MB `.exe` in the tray; Linux: 13 MB program that runs in the background):
 
