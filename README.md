@@ -156,3 +156,7 @@ examples/Unity/       drop-in client for Unity mods
 examples/UE4SS-Lua/   example mod for Unreal Engine games (UE4SS Lua)
 docs/PROTOCOL.md      everything a mod needs to know
 ```
+
+## Support
+
+If you enjoy this project, you can support me on Ko-fi: [https://ko-fi.com/alexjustalex](https://ko-fi.com/alexjustalex)
