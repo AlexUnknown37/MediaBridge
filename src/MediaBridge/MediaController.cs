@@ -10,7 +10,7 @@ namespace MediaBridge;
 /// Talks to Windows' built-in media controls (the same system behind the volume/media popup).
 /// Works with Spotify, browsers, and most music apps.
 /// </summary>
-sealed class MediaController
+sealed class MediaController : IMediaController
 {
     GsmtcManager? _manager;
     GsmtcSession? _session;

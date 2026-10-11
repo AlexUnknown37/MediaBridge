@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 namespace MediaBridge;
 
 /// <summary>
-/// User settings, saved as JSON in %LOCALAPPDATA%\MediaBridge\settings.json.
+/// User settings, saved as JSON in %LOCALAPPDATA%\MediaBridge\settings.json (Linux: ~/.local/share/MediaBridge).
 /// </summary>
 sealed class Settings
 {
@@ -22,6 +22,12 @@ sealed class Settings
     /// <summary>How much volume_up / volume_down change the volume (0.05 = 5%).</summary>
     public float VolumeStep { get; set; } = 0.05f;
 
+    /// <summary>Linux only: apps automatically sent into the picked output, e.g. ["spotify"].</summary>
+    public List<string> RouteApps { get; set; } = [];
+
+    /// <summary>Linux only: also play the picked output on the normal speakers.</summary>
+    public bool Listen { get; set; }
+
     public static Settings Load()
     {
         var s = new Settings();
@@ -35,6 +41,8 @@ sealed class Settings
             s.AudioPort = (int?)json["audioPort"] ?? s.AudioPort;
             s.RadioPort = (int?)json["radioPort"] ?? s.RadioPort;
             s.VolumeStep = (float?)json["volumeStep"] ?? s.VolumeStep;
+            if (json["routeApps"] is JsonArray apps) s.RouteApps = apps.Select(a => (string?)a).OfType<string>().ToList();
+            s.Listen = (bool?)json["listen"] ?? s.Listen;
         }
         catch (Exception ex)
         {
@@ -55,6 +63,8 @@ sealed class Settings
                 ["audioPort"] = AudioPort,
                 ["radioPort"] = RadioPort,
                 ["volumeStep"] = VolumeStep,
+                ["routeApps"] = new JsonArray(RouteApps.Select(a => (JsonNode)a).ToArray()),
+                ["listen"] = Listen,
             };
             File.WriteAllText(FilePath, json.ToJsonString(new() { WriteIndented = true }));
         }

@@ -18,14 +18,14 @@ sealed class RadioServer
     const int SampleRate = 48000, Channels = 2, Bitrate = 192_000;
 
     readonly Settings _settings;
-    readonly AudioHub _audio;
+    readonly IAudioHub _audio;
     readonly List<Listener> _listeners = [];
     readonly CancellationTokenSource _stop = new();
     readonly LivePcmProvider _pcm = new(SampleRate, Channels);
     readonly List<LivePcmProvider> _wavFeeds = [];
     Thread? _encoderThread;
 
-    public RadioServer(Settings settings, AudioHub audio)
+    public RadioServer(Settings settings, IAudioHub audio)
     {
         _settings = settings;
         _audio = audio;
@@ -45,6 +45,11 @@ sealed class RadioServer
     public string WavUrl => $"http://127.0.0.1:{_settings.RadioPort}/MediaBridge.wav";
     public int ListenerCount { get { lock (_listeners) lock (_wavFeeds) return _listeners.Count + _wavFeeds.Count; } }
     public event Action? ListenersChanged;
+
+    /// <summary>Set by Program: lets the control page at "/" run commands.</summary>
+    public BridgeServer? Commands { get; set; }
+    /// <summary>Set by Program: song info and cover art for the control page.</summary>
+    public IMediaController? Media { get; set; }
 
     public void Start()
     {
@@ -84,12 +89,22 @@ sealed class RadioServer
         bool wav = false;
         try
         {
-            // Read the request headers (we don't care what path was asked for).
             var request = await ReadRequestHead(stream);
             if (request == null) { tcp.Close(); return; }
             var firstLine = request.Split("\r\n", 2)[0];
+            var path = firstLine.Split(' ').ElementAtOrDefault(1) ?? "/";
+
+            // The control page and its small API. Everything else is the audio stream.
+            if (path == "/" || path.StartsWith("/api/") || path.StartsWith("/artwork"))
+            {
+                await ServePage(stream, firstLine, path, request);
+                tcp.Close();
+                return;
+            }
+
             Log.Write($"Radio request: {firstLine}");
-            wav = firstLine.Contains(".wav", StringComparison.OrdinalIgnoreCase);
+            // Linux has no built-in MP3 encoder, so it always sends WAV (players accept it under either name).
+            wav = firstLine.Contains(".wav", StringComparison.OrdinalIgnoreCase) || !OperatingSystem.IsWindows();
 
             var headers =
                 "HTTP/1.1 200 OK\r\n" +
@@ -161,6 +176,71 @@ sealed class RadioServer
             Log.Write("Radio listener left (wav)");
             ListenersChanged?.Invoke();
         }
+    }
+
+    async Task ServePage(NetworkStream stream, string firstLine, string path, string request)
+    {
+        byte[] body;
+        string type;
+        int status = 200;
+        if (path == "/")
+        {
+            body = Encoding.UTF8.GetBytes(ControlPage.Html);
+            type = "text/html; charset=utf-8";
+        }
+        else if (path.StartsWith("/artwork"))
+        {
+            var (data, mime) = Media?.Artwork() ?? (null, null);
+            body = data ?? [];
+            type = mime ?? "image/png";
+            if (data == null) status = 404;
+        }
+        else if (path == "/api/state" && Commands != null)
+        {
+            var state = await Commands.ExecuteAsync("""{"cmd":"get_state"}""") ?? [];
+            var devices = await Commands.ExecuteAsync("""{"cmd":"list_devices"}""");
+            state["devices"] = devices?["devices"]?.DeepClone();
+            state["radioUrl"] = WavUrl;
+            body = Encoding.UTF8.GetBytes(state.ToJsonString());
+            type = "application/json";
+        }
+        else if (path == "/api/cmd" && firstLine.StartsWith("POST ") && Commands != null
+                 // A custom header can't be sent cross-site without permission, so other websites can't drive this.
+                 && request.Contains("\r\nX-MediaBridge:", StringComparison.OrdinalIgnoreCase))
+        {
+            var json = await ReadBody(stream, request);
+            var reply = await Commands.ExecuteAsync(json) ?? [];
+            body = Encoding.UTF8.GetBytes(reply.ToJsonString());
+            type = "application/json";
+        }
+        else
+        {
+            status = 404;
+            body = "not found"u8.ToArray();
+            type = "text/plain";
+        }
+        var head = $"HTTP/1.1 {status} {(status == 200 ? "OK" : "Not Found")}\r\nContent-Type: {type}\r\nContent-Length: {body.Length}\r\n" +
+                   "Cache-Control: no-store\r\nConnection: close\r\n\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(head), _stop.Token);
+        if (!firstLine.StartsWith("HEAD ")) await stream.WriteAsync(body, _stop.Token);
+    }
+
+    static async Task<string> ReadBody(NetworkStream stream, string request)
+    {
+        var split = request.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        var already = request[(split + 4)..];
+        var lengthLine = request.Split("\r\n").FirstOrDefault(l => l.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase));
+        int length = int.TryParse(lengthLine?.Split(':', 2)[1].Trim(), out var n) ? Math.Min(n, 64 * 1024) : already.Length;
+        var bytes = new List<byte>(Encoding.UTF8.GetBytes(already));
+        var buf = new byte[4096];
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (bytes.Count < length)
+        {
+            int got = await stream.ReadAsync(buf, timeout.Token);
+            if (got == 0) break;
+            bytes.AddRange(buf.AsSpan(0, got).ToArray());
+        }
+        return Encoding.UTF8.GetString(bytes.ToArray(), 0, Math.Min(bytes.Count, length));
     }
 
     static async Task<string?> ReadRequestHead(NetworkStream stream)

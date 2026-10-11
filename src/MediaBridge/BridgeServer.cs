@@ -19,8 +19,8 @@ sealed class BridgeServer
     public static readonly string Version = typeof(BridgeServer).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
     readonly Settings _settings;
-    readonly MediaController _media;
-    readonly AudioHub _audio;
+    readonly IMediaController _media;
+    readonly IAudioHub _audio;
     readonly List<ControlClient> _controlClients = [];
     readonly List<AudioClient> _audioClients = [];
     readonly CancellationTokenSource _stop = new();
@@ -28,7 +28,7 @@ sealed class BridgeServer
     public event Action? ClientsChanged;
     public event Action<Action>? UserDeviceChange; // lets the tray app run device picks on its thread
 
-    public BridgeServer(Settings settings, MediaController media, AudioHub audio)
+    public BridgeServer(Settings settings, IMediaController media, IAudioHub audio)
     {
         _settings = settings;
         _media = media;
@@ -140,7 +140,10 @@ sealed class BridgeServer
         await writer;
     }
 
-    async Task<JsonObject?> HandleCommand(ControlClient client, string line)
+    /// <summary>Runs one JSON command line without a TCP client (used by the control web page).</summary>
+    public Task<JsonObject?> ExecuteAsync(string line) => HandleCommand(null, line);
+
+    async Task<JsonObject?> HandleCommand(ControlClient? client, string line)
     {
         JsonObject? msg;
         try { msg = JsonNode.Parse(line)?.AsObject(); }
@@ -155,6 +158,7 @@ sealed class BridgeServer
             switch (cmd)
             {
                 case "hello":
+                    if (client == null) return Reply(id, true);
                     client.Name = (string?)msg["name"] ?? client.Name;
                     Log.Write($"Mod connected: {client.Name}");
                     ClientsChanged?.Invoke();
@@ -186,7 +190,29 @@ sealed class BridgeServer
                     state["media"] = _media.Snapshot();
                     state["volume"] = _audio.VolumeInfo();
                     state["device"] = _audio.DeviceInfo();
+                    if (_audio is Linux.PulseAudioHub pulse)
+                        state["linux"] = new JsonObject
+                        {
+                            ["routeApps"] = new JsonArray(pulse.RouteApps.Select(a => (JsonNode)a).ToArray()),
+                            ["listen"] = pulse.Listening,
+                        };
                     return state;
+
+                // Linux only: send apps (e.g. "spotify") into the picked output automatically.
+                case "set_route_apps":
+                    if (_audio is not Linux.PulseAudioHub routeHub) return Reply(id, false, "unsupported", "Only available on Linux.");
+                    var apps = (msg["apps"] as JsonArray)?.Select(a => (string?)a).OfType<string>().ToList() ?? [];
+                    routeHub.SetRouteApps(apps);
+                    _settings.RouteApps = apps; _settings.Save();
+                    return Reply(id, true);
+
+                // Linux only: also play the picked output on the normal speakers.
+                case "set_listen":
+                    if (_audio is not Linux.PulseAudioHub listenHub) return Reply(id, false, "unsupported", "Only available on Linux.");
+                    var on = (bool?)msg["value"] ?? true;
+                    if (!listenHub.SetListen(on)) return Reply(id, false, "listen_failed", "Pick an output other than your speakers first.");
+                    _settings.Listen = on; _settings.Save();
+                    return Reply(id, true);
 
                 case "get_artwork":
                     var (data, mime) = _media.Artwork();
@@ -207,12 +233,14 @@ sealed class BridgeServer
                     if (devId == null) return Reply(id, false, "bad_args", "select_device needs \"deviceId\" (from list_devices).");
                     var ok = false;
                     var done = new TaskCompletionSource();
-                    UserDeviceChange?.Invoke(() =>
+                    Action select = () =>
                     {
                         ok = _audio.TrySelect(devId);
                         if (ok) { _settings.DeviceId = devId; _settings.Save(); }
                         done.TrySetResult();
-                    });
+                    };
+                    if (UserDeviceChange != null) UserDeviceChange(select); // Windows: on the tray's thread
+                    else select();
                     await done.Task.WaitAsync(TimeSpan.FromSeconds(5));
                     return ok ? Reply(id, true) : Reply(id, false, "bad_device", "That device is not available.");
 

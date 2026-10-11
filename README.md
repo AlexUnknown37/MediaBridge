@@ -1,6 +1,6 @@
 # MediaBridge
 
-A tiny Windows tray app (one 4 MB `.exe`, no install needed) that lets **game mods** use your music:
+A tiny app for **Windows and Linux (including Steam Deck)** that lets **game mods** use your music. One file, no install needed (Windows: 4 MB `.exe` in the tray; Linux: 13 MB program that runs in the background):
 
 - **Control it:** play, pause, next, previous
 - **See it:** song title, artist, album, cover art, play position (from Windows' media controls, so it works with Spotify, browsers, etc.)
@@ -8,7 +8,8 @@ A tiny Windows tray app (one 4 MB `.exe`, no install needed) that lets **game mo
 - **Hear it in 3D:** the mod gets the live audio and plays it from a speaker in the game world
 - **Radio station:** the music is also an internet-radio stream, for games with built-in internet radio (e.g. Pacific Drive):
   `http://127.0.0.1:48902/MediaBridge.wav` (starts fastest in most games) or `http://127.0.0.1:48902/MediaBridge.mp3`
-- **Script bridge:** mods that can't use network sockets (e.g. UE4SS Lua) send commands through a named pipe and read the song from a text file
+- **Script bridge:** mods that can't use network sockets (e.g. UE4SS Lua) send commands through a named pipe (Linux/Proton: a text file) and read the song from a text file
+- **Control page:** <http://127.0.0.1:48902/> in any browser shows the song, buttons, volume and device picker
 
 MediaBridge isn't a mod. It's the shared piece any mod can talk to.
 
@@ -44,6 +45,30 @@ Because the music now goes into the cable, you won't hear it on your headphones 
 Control Panel → Sound → **Recording** tab → **CABLE Output** → Properties → **Listen** → tick *Listen to this device* and pick your headphones.
 (Turn this off while playing a modded game, or you'll hear the music twice.)
 
+## Setup on Linux / Steam Deck
+
+Linux needs no VB-Cable: MediaBridge creates its own virtual speaker called **MediaBridge**.
+
+1. Copy the `MediaBridge` program (Linux build) somewhere permanent, e.g. `~/Applications/MediaBridge/`.
+   On the Steam Deck, do this in **Desktop Mode**.
+2. Open a terminal (Konsole) in that folder and run:
+   ```bash
+   chmod +x MediaBridge && ./MediaBridge --install
+   ```
+   This starts MediaBridge now and every time you log in, in Desktop Mode and Game Mode alike. No sudo needed.
+   (`./MediaBridge --uninstall` removes it; `./MediaBridge --status` shows whether it's running.)
+3. Open <http://127.0.0.1:48902/> in a browser:
+   - **Listen to:** pick **MediaBridge**. It's picked automatically.
+   - **Send these apps here automatically:** tick it and type `spotify`. From then on, Spotify plays into MediaBridge by itself, even in Game Mode.
+   - **Also play it on my speakers:** tick it if you want to hear the music outside games.
+
+Needs: PipeWire or PulseAudio (`pactl`, `pacat`) and systemd (`busctl`). SteamOS and most desktops have all of these.
+Music apps are found through MPRIS, the standard Linux media controls (Spotify, Firefox, Chrome, VLC, ...).
+
+**Windows games under Proton:** mods inside the game reach MediaBridge at `127.0.0.1` exactly like on Windows.
+Script-bridge mods use `Z:\tmp\MediaBridge\commands.txt` and `Z:\tmp\MediaBridge\nowplaying.txt` instead of the pipe.
+The UE4SS Lua example handles both.
+
 ---
 
 ## For mod makers
@@ -54,7 +79,7 @@ Control Panel → Sound → **Recording** tab → **CABLE Output** → Propertie
 
 The short version: connect to `127.0.0.1:48900`, send `{"cmd":"play_pause"}` lines, and read event lines. Audio is raw float32 on port `48901`.
 
-No sockets (e.g. UE4SS Lua)? Write `next` to the named pipe `\\.\pipe\MediaBridge`, and read the song from `%LOCALAPPDATA%\MediaBridge\nowplaying.txt`.
+No sockets (e.g. UE4SS Lua)? Write `next` to the named pipe `\\.\pipe\MediaBridge`, and read the song from `%LOCALAPPDATA%\MediaBridge\nowplaying.txt`. On Linux/Proton: append `next` to `Z:\tmp\MediaBridge\commands.txt` and read `Z:\tmp\MediaBridge\nowplaying.txt`.
 
 Game has internet radio? Point it at `http://127.0.0.1:48902/MediaBridge.wav` and the game plays the music with its own 3D audio.
 
@@ -76,9 +101,12 @@ Please don't bundle MediaBridge inside your mod. Detect it (see PROTOCOL.md), st
 | `HKCU\Software\MediaBridge` | same info as bridge.json |
 | `HKCU\...\CurrentVersion\Run\MediaBridge` | only if "Start with Windows" is on |
 
+On Linux the same files are in `~/.local/share/MediaBridge/`. `bridge.json`, `nowplaying.txt`, `commands.txt` and `MediaBridge.m3u8` are also in `/tmp/MediaBridge/`, which Proton games see as `Z:\tmp\MediaBridge`. Auto-start: `~/.config/systemd/user/mediabridge.service`.
+
 ## Requirements
 
-Windows 10 version 2004 or newer, or Windows 11. 64-bit.
+- Windows 10 version 2004 or newer, or Windows 11. 64-bit.
+- Linux x64 with PipeWire or PulseAudio and systemd (SteamOS 3, Fedora, Ubuntu, Arch, ...).
 
 ---
 
@@ -87,10 +115,14 @@ Windows 10 version 2004 or newer, or Windows 11. 64-bit.
 Needs the .NET 10 SDK, plus Visual Studio's "Desktop development with C++" tools for the native build.
 
 ```bash
-dotnet publish src/MediaBridge -c Release -o publish
+dotnet publish src/MediaBridge -f net10.0-windows10.0.19041.0 -c Release -o publish/windows
 ```
 
-This gives `publish/MediaBridge.exe` (~4 MB native, no .NET needed to run it).
+```bash
+dotnet publish src/MediaBridge -f net10.0 -r linux-x64 -c Release -o publish/linux
+```
+
+This gives `publish/windows/MediaBridge.exe` (~4 MB native) and `publish/linux/MediaBridge` (~13 MB single file). Neither needs .NET installed to run. The Linux build can be made on Windows.
 
 **Test client:** `tools/TestClient` pretends to be a mod.
 
@@ -105,13 +137,16 @@ Then type `play_pause`, `next`, `vol 0.5`, `devices`, `select 2`, `art`, `state`
 
 ```
 src/MediaBridge/
-  Program.cs          startup, single-instance check, discovery info
+  Program.cs          startup, single-instance check, discovery info; picks the Windows or Linux parts
+  Platform.cs         the two jobs each OS does its own way (media controls, audio)
   MediaController.cs  Windows media controls: play/pause/skip + song info + cover art
-  AudioHub.cs         the picked device: recording it + its Windows volume
+  AudioHub.cs         Windows: the picked device, recording it + its volume
+  Linux/              Linux versions: MPRIS media controls, PipeWire/PulseAudio audio, --install
+  ControlPage.cs      the browser control page at http://127.0.0.1:48902/
   BridgeServer.cs     the two local ports mods connect to
   RadioServer.cs      the WAV and MP3 internet-radio streams (port 48902)
-  ScriptBridge.cs     named pipe + nowplaying.txt, for mods without sockets
-  TrayApp.cs          tray icon and menu
+  ScriptBridge.cs     named pipe (Linux: commands.txt) + nowplaying.txt, for mods without sockets
+  TrayApp.cs          Windows tray icon and menu
   Win32.cs            raw Windows calls used by the tray
   Settings.cs         settings file + log
 tools/TestClient/     fake mod for testing

@@ -1,24 +1,47 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    One project, two builds:
+      Windows: dotnet publish -f net10.0-windows10.0.19041.0 -r win-x64    (native ~4 MB .exe)
+      Linux:   dotnet publish -f net10.0 -r linux-x64                      (single file, no .NET install needed)
+  -->
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
     <!-- The 10.0.19041 suffix unlocks the Windows media-controls API (works on Windows 10 2004+ and 11). -->
-    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
-    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <TargetFrameworks>net10.0-windows10.0.19041.0;net10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>MediaBridge</AssemblyName>
-    <Version>0.2.0</Version>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Version>0.3.0</Version>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+  </PropertyGroup>
 
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-windows10.0.19041.0'">
+    <OutputType>WinExe</OutputType>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <!-- Publish as one small native .exe that needs no .NET install. -->
     <PublishAot>true</PublishAot>
     <OptimizationPreference>Size</OptimizationPreference>
-    <InvariantGlobalization>true</InvariantGlobalization>
-    <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <StackTraceSupport>false</StackTraceSupport>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <OutputType>Exe</OutputType>
+    <!-- Native AOT can't cross-compile from Windows, so Linux gets a trimmed, compressed single file instead. -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- MP3 encoding is Windows-only and never reached on Linux (it serves WAV). -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <!-- Windows-only parts are left out of the Linux build. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <Compile Remove="AudioHub.cs;MediaController.cs;TrayApp.cs;Win32.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="NAudio.Wasapi" Version="3.1.0" />

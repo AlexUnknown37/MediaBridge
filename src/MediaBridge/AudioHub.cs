@@ -12,7 +12,7 @@ namespace MediaBridge;
 /// into it ("loopback"). For an input device (e.g. "CABLE Output", or a mic) we record it directly.
 /// Audio is always handed out as 32-bit float, interleaved, in the device's own sample rate.
 /// </summary>
-sealed class AudioHub : IDisposable
+sealed class AudioHub : IAudioHub
 {
     readonly MMDeviceEnumerator _enumerator = new();
     readonly object _gate = new();

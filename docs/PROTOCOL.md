@@ -27,6 +27,7 @@ Ports can be changed by the user; the current ones are in the discovery info (be
    - or the file `%LOCALAPPDATA%\MediaBridge\bridge.json` → `installPath`, `controlPort`, `audioPort`, `version`, `protocol`
 
    Start `InstallPath`, wait ~1 second, connect again. (Starting it twice is harmless — the second copy exits.)
+   On Linux, see "Linux notes" below.
 3. If neither exists, it isn't installed. Show the player a message with the download link.
    **Please don't bundle or silently install MediaBridge** — one shared copy serves every mod.
 
@@ -188,3 +189,41 @@ if f then f:write("next\n"); f:close() end
 **Song info:** `%LOCALAPPDATA%\MediaBridge\nowplaying.txt`, one `key=value` per line:
 `title`, `artist`, `album`, `status`, `app`, `seq`. It's rewritten only when the song or play state changes,
 and `seq` goes up by one every time, so poll it (e.g. every 250 ms) and compare `seq`.
+
+**On Linux / Steam Deck (games running under Proton):** a Windows game can't reach a Linux pipe, so use the
+shared folder `/tmp/MediaBridge`, which the game sees as `Z:\tmp\MediaBridge`:
+- **commands:** append lines to `Z:\tmp\MediaBridge\commands.txt`. MediaBridge picks up new lines within 100 ms.
+- **song info:** read `Z:\tmp\MediaBridge\nowplaying.txt` (same format).
+
+Try the pipe first and fall back to the folder, and the same mod works on both systems:
+
+```lua
+local f = io.open([[\\.\pipe\MediaBridge]], "w") or io.open("Z:/tmp/MediaBridge/commands.txt", "a")
+if f then f:write("next\n"); f:close() end
+```
+
+---
+
+## Linux notes
+
+- **Same protocol, same ports.** Native Linux mods and Windows games under Proton both connect to `127.0.0.1:48900` / `48901` / `48902`.
+- **Discovery:** `bridge.json` is in `~/.local/share/MediaBridge/` and `/tmp/MediaBridge/` (Proton: `Z:\tmp\MediaBridge\bridge.json`). It has `"os": "linux"`. There's no registry entry.
+  If it isn't running, a Proton game can't start it for the player. Ask them to run `MediaBridge --install` once instead.
+- **Radio:** Linux has no built-in MP3 encoder, so both radio URLs stream WAV.
+- **Device IDs** look like `sink:MediaBridge` (outputs) or `source:alsa_input...` (inputs).
+- **Extra commands (Linux only; other systems reply `"error":"unsupported"`):**
+
+| Command | Extra fields | What it does |
+|---|---|---|
+| `set_route_apps` | `"apps"`: e.g. `["spotify"]` | Send these apps into the picked output automatically, including when they start later. `[]` sends them back to the speakers. |
+| `set_listen` | `"value"`: true/false | Also play the picked output on the normal speakers, to hear the music outside games |
+
+`get_state` replies also include `"linux": {"routeApps": [...], "listen": false}`.
+
+---
+
+## Control page (port 48902)
+
+`http://127.0.0.1:48902/` is a small settings page for players: song, buttons, volume, device picker (and the Linux extras).
+It uses `GET /api/state` and `POST /api/cmd`. The body is any control-channel command as JSON, and the request must
+include the header `X-MediaBridge: 1`, so other websites can't send commands. Cover art is at `/artwork`.
