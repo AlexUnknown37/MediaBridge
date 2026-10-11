@@ -6,7 +6,9 @@ A tiny Windows tray app (one 4 MB `.exe`, no install needed) that lets **game mo
 - **See it:** song title, artist, album, cover art, play position (from Windows' media controls, so it works with Spotify, browsers, etc.)
 - **Set the volume** of the audio device you picked (e.g. VB-Cable), for in-game volume sliders
 - **Hear it in 3D:** the mod gets the live audio and plays it from a speaker in the game world
-- **Radio station:** the music is also an MP3 internet-radio stream at `http://127.0.0.1:48902/MediaBridge.mp3`, for games with built-in internet radio (e.g. Pacific Drive)
+- **Radio station:** the music is also an internet-radio stream, for games with built-in internet radio (e.g. Pacific Drive):
+  `http://127.0.0.1:48902/MediaBridge.wav` (starts fastest in most games) or `http://127.0.0.1:48902/MediaBridge.mp3`
+- **Script bridge:** mods that can't use network sockets (e.g. UE4SS Lua) send commands through a named pipe and read the song from a text file
 
 MediaBridge isn't a mod. It's the shared piece any mod can talk to.
 
@@ -48,8 +50,15 @@ Control Panel → Sound → **Recording** tab → **CABLE Output** → Propertie
 
 - Protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 - Ready-to-use Unity / BepInEx / MelonLoader client: [examples/Unity/MediaBridgeClient.cs](examples/Unity/MediaBridgeClient.cs)
+- Unreal Engine games with UE4SS (Lua): [examples/UE4SS-Lua](examples/UE4SS-Lua)
 
 The short version: connect to `127.0.0.1:48900`, send `{"cmd":"play_pause"}` lines, and read event lines. Audio is raw float32 on port `48901`.
+
+No sockets (e.g. UE4SS Lua)? Write `next` to the named pipe `\\.\pipe\MediaBridge`, and read the song from `%LOCALAPPDATA%\MediaBridge\nowplaying.txt`.
+
+Game has internet radio? Point it at `http://127.0.0.1:48902/MediaBridge.wav` and the game plays the music with its own 3D audio.
+
+**Mods using MediaBridge:** MediaBridge Radio for Pacific Drive (car radio buttons skip songs, and the radio shows the song name).
 
 Please don't bundle MediaBridge inside your mod. Detect it (see PROTOCOL.md), start it if it's installed, and otherwise link players to the download.
 
@@ -61,7 +70,8 @@ Please don't bundle MediaBridge inside your mod. Detect it (see PROTOCOL.md), st
 |---|---|
 | `%LOCALAPPDATA%\MediaBridge\settings.json` | picked device, ports, volume step |
 | `%LOCALAPPDATA%\MediaBridge\bridge.json` | where the .exe is, so mods can start it |
-| `%LOCALAPPDATA%\MediaBridge\MediaBridge.m3u8` | radio playlist to copy into games with internet radio |
+| `%LOCALAPPDATA%\MediaBridge\MediaBridge.m3u8` | radio playlist (WAV link) to copy into games with internet radio |
+| `%LOCALAPPDATA%\MediaBridge\nowplaying.txt` | current song, for mods that read files (script bridge) |
 | `%LOCALAPPDATA%\MediaBridge\log.txt` | log of the current run (`log.txt.old` = previous run) |
 | `HKCU\Software\MediaBridge` | same info as bridge.json |
 | `HKCU\...\CurrentVersion\Run\MediaBridge` | only if "Start with Windows" is on |
@@ -99,11 +109,13 @@ src/MediaBridge/
   MediaController.cs  Windows media controls: play/pause/skip + song info + cover art
   AudioHub.cs         the picked device: recording it + its Windows volume
   BridgeServer.cs     the two local ports mods connect to
-  RadioServer.cs      the MP3 internet-radio stream (port 48902)
+  RadioServer.cs      the WAV and MP3 internet-radio streams (port 48902)
+  ScriptBridge.cs     named pipe + nowplaying.txt, for mods without sockets
   TrayApp.cs          tray icon and menu
   Win32.cs            raw Windows calls used by the tray
   Settings.cs         settings file + log
 tools/TestClient/     fake mod for testing
 examples/Unity/       drop-in client for Unity mods
+examples/UE4SS-Lua/   example mod for Unreal Engine games (UE4SS Lua)
 docs/PROTOCOL.md      everything a mod needs to know
 ```
