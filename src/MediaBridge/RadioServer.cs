@@ -22,17 +22,28 @@ sealed class RadioServer
     readonly List<Listener> _listeners = [];
     readonly CancellationTokenSource _stop = new();
     readonly LivePcmProvider _pcm = new(SampleRate, Channels);
+    readonly List<LivePcmProvider> _wavFeeds = [];
     Thread? _encoderThread;
 
     public RadioServer(Settings settings, AudioHub audio)
     {
         _settings = settings;
         _audio = audio;
-        _audio.AudioAvailable += (buf, count) => _pcm.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate);
+        _audio.AudioAvailable += (buf, count) =>
+        {
+            _pcm.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate);
+            lock (_wavFeeds)
+                foreach (var feed in _wavFeeds) feed.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate);
+        };
     }
 
     public string Url => $"http://127.0.0.1:{_settings.RadioPort}/MediaBridge.mp3";
-    public int ListenerCount { get { lock (_listeners) return _listeners.Count; } }
+    /// <summary>
+    /// The same audio as uncompressed WAV. Windows Media Foundation players start it after ~3 s instead of ~6 s for MP3
+    /// (they buffer longer for MP3), so it's the better choice for games that play streams through Media Foundation.
+    /// </summary>
+    public string WavUrl => $"http://127.0.0.1:{_settings.RadioPort}/MediaBridge.wav";
+    public int ListenerCount { get { lock (_listeners) lock (_wavFeeds) return _listeners.Count + _wavFeeds.Count; } }
     public event Action? ListenersChanged;
 
     public void Start()
@@ -70,6 +81,7 @@ sealed class RadioServer
     {
         tcp.NoDelay = true;
         var stream = tcp.GetStream();
+        bool wav = false;
         try
         {
             // Read the request headers (we don't care what path was asked for).
@@ -77,10 +89,11 @@ sealed class RadioServer
             if (request == null) { tcp.Close(); return; }
             var firstLine = request.Split("\r\n", 2)[0];
             Log.Write($"Radio request: {firstLine}");
+            wav = firstLine.Contains(".wav", StringComparison.OrdinalIgnoreCase);
 
             var headers =
                 "HTTP/1.1 200 OK\r\n" +
-                "Content-Type: audio/mpeg\r\n" +
+                (wav ? "Content-Type: audio/wav\r\n" : "Content-Type: audio/mpeg\r\n") +
                 "Cache-Control: no-cache, no-store\r\n" +
                 "Pragma: no-cache\r\n" +
                 "Connection: close\r\n" +
@@ -90,6 +103,8 @@ sealed class RadioServer
             if (firstLine.StartsWith("HEAD ", StringComparison.OrdinalIgnoreCase)) { tcp.Close(); return; }
         }
         catch { tcp.Close(); return; }
+
+        if (wav) { await Task.Factory.StartNew(() => ServeWav(tcp, stream), TaskCreationOptions.LongRunning); return; }
 
         var listener = new Listener(tcp);
         lock (_listeners)
@@ -109,6 +124,41 @@ sealed class RadioServer
             tcp.Close();
             lock (_listeners) _listeners.Remove(listener);
             Log.Write("Radio listener left");
+            ListenersChanged?.Invoke();
+        }
+    }
+
+    /// <summary>Streams raw 16-bit PCM in a WAV container with "endless" sizes. Runs on its own thread (the feed blocks).</summary>
+    void ServeWav(TcpClient tcp, NetworkStream stream)
+    {
+        // Small lead: capture arrives in ~10 ms packets, so 60 ms is plenty and keeps the delay low.
+        var feed = new LivePcmProvider(SampleRate, Channels, leadSeconds: 0.06);
+        feed.Restart(stopWhen: () => _stop.IsCancellationRequested);
+        lock (_wavFeeds) _wavFeeds.Add(feed);
+        ListenersChanged?.Invoke();
+        try
+        {
+            var fmt = feed.WaveFormat;
+            using (var header = new MemoryStream())
+            using (var w = new BinaryWriter(header))
+            {
+                w.Write("RIFF"u8); w.Write(-1); w.Write("WAVE"u8);
+                w.Write("fmt "u8); w.Write(16); w.Write((short)1); w.Write((short)fmt.Channels);
+                w.Write(fmt.SampleRate); w.Write(fmt.AverageBytesPerSecond); w.Write((short)fmt.BlockAlign); w.Write((short)16);
+                w.Write("data"u8); w.Write(-1);
+                w.Flush();
+                stream.Write(header.ToArray());
+            }
+            var buffer = new byte[fmt.AverageBytesPerSecond / 50];
+            int n;
+            while ((n = feed.Read(buffer)) > 0) stream.Write(buffer, 0, n); // throws when the game hangs up
+        }
+        catch { }
+        finally
+        {
+            tcp.Close();
+            lock (_wavFeeds) _wavFeeds.Remove(feed);
+            Log.Write("Radio listener left (wav)");
             ListenersChanged?.Invoke();
         }
     }
@@ -215,9 +265,11 @@ sealed class LivePcmProvider : IWaveProvider
     readonly Stopwatch _clock = new();
     long _bytesDelivered;
     Func<bool> _stopWhen = () => false;
+    readonly double _lead;
 
-    public LivePcmProvider(int sampleRate, int channels)
+    public LivePcmProvider(int sampleRate, int channels, double leadSeconds = 0.2)
     {
+        _lead = leadSeconds;
         WaveFormat = new WaveFormat(sampleRate, 16, channels);
         _ring = new byte[WaveFormat.AverageBytesPerSecond * 2]; // up to 2 s
     }
@@ -268,8 +320,8 @@ sealed class LivePcmProvider : IWaveProvider
         int want = Math.Min(buffer.Length, WaveFormat.AverageBytesPerSecond / 50);
         want -= want % WaveFormat.BlockAlign;
 
-        // Stay ~200 ms behind real time, so the captured audio is always already waiting for us.
-        while (_bytesDelivered + want > (_clock.Elapsed.TotalSeconds - 0.2) * WaveFormat.AverageBytesPerSecond)
+        // Stay a little behind real time (200 ms by default), so the captured audio is always already waiting for us.
+        while (_bytesDelivered + want > (_clock.Elapsed.TotalSeconds - _lead) * WaveFormat.AverageBytesPerSecond)
         {
             Thread.Sleep(5);
             if (_stopWhen()) return 0;
@@ -278,7 +330,7 @@ sealed class LivePcmProvider : IWaveProvider
         lock (_gate)
         {
             // If capture got far ahead (clock drift), skip to keep latency low.
-            int maxBacklog = WaveFormat.AverageBytesPerSecond / 2;
+            int maxBacklog = (int)(WaveFormat.AverageBytesPerSecond * Math.Max(0.25, _lead * 2.5)) / WaveFormat.BlockAlign * WaveFormat.BlockAlign;
             if (_count > maxBacklog)
             {
                 int drop = (_count - maxBacklog / 2) / WaveFormat.BlockAlign * WaveFormat.BlockAlign;

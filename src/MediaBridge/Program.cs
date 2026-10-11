@@ -48,7 +48,7 @@ static class Program
         });
 
         script.Start();
-        WriteDiscoveryInfo(settings, radio.Url);
+        WriteDiscoveryInfo(settings, radio.Url, radio.WavUrl);
 
         new TrayApp(settings, media, audio, server, radio).Run();
 
@@ -64,7 +64,7 @@ static class Program
     ///   Registry: HKEY_CURRENT_USER\Software\MediaBridge  (InstallPath, ControlPort, AudioPort, RadioPort, RadioUrl, Version)
     ///   File:     %LOCALAPPDATA%\MediaBridge\bridge.json
     /// </summary>
-    static void WriteDiscoveryInfo(Settings settings, string radioUrl)
+    static void WriteDiscoveryInfo(Settings settings, string radioUrl, string radioWavUrl)
     {
         var exe = Environment.ProcessPath ?? "";
         try
@@ -75,6 +75,7 @@ static class Program
             key.SetValue("AudioPort", settings.AudioPort, RegistryValueKind.DWord);
             key.SetValue("RadioPort", settings.RadioPort, RegistryValueKind.DWord);
             key.SetValue("RadioUrl", radioUrl);
+            key.SetValue("RadioWavUrl", radioWavUrl);
             key.SetValue("Version", BridgeServer.Version);
         }
         catch (Exception ex) { Log.Write($"Could not write registry info: {ex.Message}"); }
@@ -88,6 +89,7 @@ static class Program
                 ["audioPort"] = settings.AudioPort,
                 ["radioPort"] = settings.RadioPort,
                 ["radioUrl"] = radioUrl,
+                ["radioWavUrl"] = radioWavUrl,
                 ["version"] = BridgeServer.Version,
                 ["protocol"] = BridgeServer.ProtocolVersion,
             };
@@ -96,7 +98,8 @@ static class Program
         catch (Exception ex) { Log.Write($"Could not write bridge.json: {ex.Message}"); }
 
         // A ready-made playlist for games whose radio accepts .m3u8 files (e.g. Pacific Drive).
-        try { File.WriteAllText(Path.Combine(Settings.DataDir, "MediaBridge.m3u8"), radioUrl + "\n"); }
+        // WAV, because Media Foundation players (like Pacific Drive's) start it about twice as fast as MP3.
+        try { File.WriteAllText(Path.Combine(Settings.DataDir, "MediaBridge.m3u8"), radioWavUrl + "\n"); }
         catch (Exception ex) { Log.Write($"Could not write MediaBridge.m3u8: {ex.Message}"); }
     }
 }
