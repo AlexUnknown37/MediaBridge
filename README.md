@@ -76,6 +76,7 @@ The UE4SS Lua example handles both.
 - Protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 - Ready-to-use Unity / BepInEx / MelonLoader client: [examples/Unity/MediaBridgeClient.cs](examples/Unity/MediaBridgeClient.cs)
 - Unreal Engine games with UE4SS (Lua): [examples/UE4SS-Lua](examples/UE4SS-Lua)
+- A complete real mod: [MediaBridge Radio for Pacific Drive](https://github.com/AlexUnknown37/PacificDrive-MediaBridgeRadio) (UE4SS Lua, Windows and Steam Deck)
 
 The short version: connect to `127.0.0.1:48900`, send `{"cmd":"play_pause"}` lines, and read event lines. Audio is raw float32 on port `48901`.
 
@@ -83,7 +84,7 @@ No sockets (e.g. UE4SS Lua)? Write `next` to the named pipe `\\.\pipe\MediaBridg
 
 Game has internet radio? Point it at `http://127.0.0.1:48902/MediaBridge.wav` and the game plays the music with its own 3D audio.
 
-**Mods using MediaBridge:** MediaBridge Radio for Pacific Drive (car radio buttons skip songs, and the radio shows the song name).
+**Mods using MediaBridge:** [MediaBridge Radio for Pacific Drive](https://github.com/AlexUnknown37/PacificDrive-MediaBridgeRadio): plays your music on the car radio, the radio's buttons skip songs, and the radio shows the song name. Works on Windows and Steam Deck.
 
 Please don't bundle MediaBridge inside your mod. Detect it (see PROTOCOL.md), start it if it's installed, and otherwise link players to the download.
 

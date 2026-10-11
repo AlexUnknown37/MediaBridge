@@ -33,5 +33,5 @@ buttons and song info. The WAV stream starts about twice as fast as the MP3 one 
 
 ## Real-world example
 
-**MediaBridge Radio for Pacific Drive**: the car radio's channel buttons skip songs, and the radio screen shows "Title - Artist".
+**[MediaBridge Radio for Pacific Drive](https://github.com/AlexUnknown37/PacificDrive-MediaBridgeRadio)**: the car radio's channel buttons skip songs, and the radio screen shows "Title - Artist".
 It uses the game's custom radio with the WAV link and these same two functions.
