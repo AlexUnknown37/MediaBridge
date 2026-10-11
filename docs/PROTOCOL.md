@@ -154,14 +154,20 @@ See `examples/Unity/MediaBridgeClient.cs` for a full working client.
 ## Radio stream (port 48902): the no-code audio option
 
 ```
+http://127.0.0.1:48902/MediaBridge.wav
 http://127.0.0.1:48902/MediaBridge.mp3
 ```
 
-The same audio as a live MP3 internet-radio stream (192 kbps, 48 kHz stereo, encoded with Windows' built-in encoder, only while someone listens).
-If your game already has an **internet radio** feature, point it at this URL. The game then plays the music with its own 3D audio, and your mod only handles buttons and song info.
-Expect 1–3 seconds of delay, as with any internet radio.
+The same audio as a live internet-radio stream, in two formats:
 
-MediaBridge also writes a ready-made playlist to `%LOCALAPPDATA%\MediaBridge\MediaBridge.m3u8`. The URL is also in `bridge.json` (`radioUrl`) and the registry (`RadioUrl`).
+- **WAV** (uncompressed 16-bit PCM, 48 kHz stereo, ~190 KB/s). Use this one if the game plays streams through
+  Windows Media Foundation (most Unreal Engine games): it starts after ~3 s, versus ~6 s for MP3.
+- **MP3** (192 kbps, encoded with Windows' built-in encoder, only while someone listens), for players that don't take WAV streams.
+
+If your game already has an **internet radio** feature, point it at one of these. The game then plays the music with its own 3D audio, and your mod only handles buttons and song info.
+Expect some delay, as with any internet radio: it's the game's player buffering, not MediaBridge.
+
+MediaBridge also writes a ready-made playlist (WAV link) to `%LOCALAPPDATA%\MediaBridge\MediaBridge.m3u8`. The URLs are also in `bridge.json` (`radioWavUrl`, `radioUrl`) and the registry (`RadioWavUrl`, `RadioUrl`).
 Example: Pacific Drive plays it when `MediaBridge.m3u8` is copied into `%LOCALAPPDATA%\PenDriverPro\Custom\Radio\`.
 
 ---

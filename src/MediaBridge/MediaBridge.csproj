@@ -9,7 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>MediaBridge</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
 
     <!-- Publish as one small native .exe that needs no .NET install. -->
