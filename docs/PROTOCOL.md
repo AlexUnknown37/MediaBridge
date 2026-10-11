@@ -163,3 +163,22 @@ Expect 1–3 seconds of delay, as with any internet radio.
 
 MediaBridge also writes a ready-made playlist to `%LOCALAPPDATA%\MediaBridge\MediaBridge.m3u8`. The URL is also in `bridge.json` (`radioUrl`) and the registry (`RadioUrl`).
 Example: Pacific Drive plays it when `MediaBridge.m3u8` is copied into `%LOCALAPPDATA%\PenDriverPro\Custom\Radio\`.
+
+---
+
+## Script bridge: for mods that can't open sockets (e.g. UE4SS Lua)
+
+Some mod loaders' scripting languages can open files but not TCP sockets. MediaBridge offers a file-based way in:
+
+**Commands:** open the named pipe `\\.\pipe\MediaBridge` for writing and write one command per line.
+Commands: `play`, `pause`, `play_pause`, `stop`, `next`, `previous`, `volume_up`, `volume_down`, `toggle_mute`.
+There are no replies. If the pipe can't be opened, MediaBridge isn't running.
+
+```lua
+local f = io.open([[\\.\pipe\MediaBridge]], "w")
+if f then f:write("next\n"); f:close() end
+```
+
+**Song info:** `%LOCALAPPDATA%\MediaBridge\nowplaying.txt`, one `key=value` per line:
+`title`, `artist`, `album`, `status`, `app`, `seq`. It's rewritten only when the song or play state changes,
+and `seq` goes up by one every time, so poll it (e.g. every 250 ms) and compare `seq`.

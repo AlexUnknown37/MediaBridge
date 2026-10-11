@@ -20,6 +20,7 @@ static class Program
         var audio = new AudioHub();
         var server = new BridgeServer(settings, media, audio);
         var radio = new RadioServer(settings, audio);
+        var script = new ScriptBridge(media, audio);
 
         try
         {
@@ -46,12 +47,14 @@ static class Program
             if (t.Exception != null) Log.Write($"Media controls unavailable: {t.Exception.InnerException?.Message}");
         });
 
+        script.Start();
         WriteDiscoveryInfo(settings, radio.Url);
 
         new TrayApp(settings, media, audio, server, radio).Run();
 
         server.Stop();
         radio.Stop();
+        script.Stop();
         audio.Dispose();
         Log.Write("MediaBridge stopped");
     }
