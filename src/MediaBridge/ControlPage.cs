@@ -36,11 +36,18 @@ static class ControlPage
   code { font-size:13px; overflow-wrap:anywhere; }
   .row { display:flex; justify-content:space-between; gap:8px; }
   #err { color:#d9534f; font-size:13px; min-height:1em; }
+  #updateLink { color:var(--accent); font-weight:600; }
 </style>
 </head>
 <body>
 <main>
-  <h1><i></i> MediaBridge</h1>
+  <h1><i></i> MediaBridge <span class="muted" id="version"></span></h1>
+
+  <section id="updates" hidden>
+    <h2>Update available</h2>
+    <div class="muted" id="updateText"></div>
+    <a id="updateLink" href="https://github.com/AlexUnknown37/MediaBridge/releases" target="_blank" rel="noopener noreferrer">View release and download</a>
+  </section>
 
   <section>
     <h2>Now playing</h2>
@@ -103,6 +110,13 @@ async function refresh() {
   try {
     const s = await (await fetch('/api/state')).json();
     const m = s.media, v = s.volume;
+    document.getElementById('version').textContent = s.updates ? 'v' + s.updates.currentVersion : '';
+    const updates = s.updates;
+    document.getElementById('updates').hidden = !updates?.available;
+    if (updates?.available) {
+      document.getElementById('updateText').textContent = (updates.releaseName || 'A new version is available') + ' (v' + updates.latestVersion + ').';
+      document.getElementById('updateLink').href = updates.releaseUrl;
+    }
     document.getElementById('title').textContent = m.title || 'Nothing playing';
     document.getElementById('artist').textContent = [m.artist, m.album].filter(Boolean).join(' · ');
     document.getElementById('app').textContent = m.app ? (m.app + ' — ' + m.status) : '';

@@ -12,6 +12,7 @@ sealed unsafe class TrayApp
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     const uint WM_TRAY = WM_APP + 1;
     const uint WM_RUN_QUEUED = WM_APP + 2;
+    const uint NIN_BALLOONUSERCLICK = 0x0405;
 
     static TrayApp? _instance; // the window procedure is static, so it finds us through this
 
@@ -20,17 +21,19 @@ sealed unsafe class TrayApp
     readonly AudioHub _audio;
     readonly BridgeServer _server;
     readonly RadioServer _radio;
+    readonly UpdateChecker _updates;
     readonly ConcurrentQueue<Action> _queue = new();
     readonly uint _taskbarCreated = RegisterWindowMessageW("TaskbarCreated");
     nint _hwnd, _icon;
 
-    public TrayApp(Settings settings, MediaController media, AudioHub audio, BridgeServer server, RadioServer radio)
+    public TrayApp(Settings settings, MediaController media, AudioHub audio, BridgeServer server, RadioServer radio, UpdateChecker updates)
     {
         _settings = settings;
         _media = media;
         _audio = audio;
         _server = server;
         _radio = radio;
+        _updates = updates;
         _instance = this;
 
         _media.Changed += _ => OnUi(UpdateTooltip);
@@ -38,6 +41,11 @@ sealed unsafe class TrayApp
         _server.ClientsChanged += () => OnUi(UpdateTooltip);
         _server.UserDeviceChange += OnUi;
         _radio.ListenersChanged += () => OnUi(UpdateTooltip);
+        _updates.Changed += newlyAvailable => OnUi(() =>
+        {
+            UpdateTooltip();
+            if (newlyAvailable) ShowUpdateBalloon();
+        });
     }
 
     /// <summary>Creates the tray icon and runs until the user picks Exit.</summary>
@@ -94,6 +102,11 @@ sealed unsafe class TrayApp
                 if (msg == WM_TRAY)
                 {
                     var evt = (uint)(l & 0xFFFF);
+                    if (evt == NIN_BALLOONUSERCLICK)
+                    {
+                        self.OpenRelease();
+                        return 0;
+                    }
                     if (evt is WM_LBUTTONUP or WM_RBUTTONUP or WM_CONTEXTMENU) self.ShowMenu();
                     return 0;
                 }
@@ -140,12 +153,30 @@ sealed unsafe class TrayApp
         var song = string.IsNullOrEmpty(title) ? "Nothing playing" : $"{title} - {m["artist"]}";
         var v = _audio.VolumeInfo();
         var vol = (bool)v["muted"]! ? "muted" : $"{Math.Round((double)v["volume"]! * 100)}%";
-        var text = $"MediaBridge\n{song}\n{_audio.DeviceName} ({vol})\nMods connected: {_server.ControlClientCount}";
+        var text = $"MediaBridge v{BridgeServer.Version}\n{song}\n{_audio.DeviceName} ({vol})\nMods connected: {_server.ControlClientCount}";
 
         var d = IconData();
         var span = new Span<char>(d.szTip, 128);
         text.AsSpan(0, Math.Min(text.Length, 127)).CopyTo(span);
         span[Math.Min(text.Length, 127)] = '\0';
+        Shell_NotifyIconW(NIM_MODIFY, &d);
+    }
+
+    void ShowUpdateBalloon()
+    {
+        var update = _updates.Snapshot();
+        var version = (string?)update["latestVersion"];
+        if (version == null) return;
+        var d = IconData();
+        d.uFlags |= NIF_INFO;
+        d.dwInfoFlags = 1; // NIIF_INFO
+        var title = new Span<char>(d.szInfoTitle, 64);
+        "MediaBridge update".AsSpan().CopyTo(title);
+        title["MediaBridge update".Length] = '\0';
+        var info = $"Version {version} is available. Click this notification to open the download page.";
+        var text = new Span<char>(d.szInfo, 256);
+        info.AsSpan(0, Math.Min(info.Length, 255)).CopyTo(text);
+        text[Math.Min(info.Length, 255)] = '\0';
         Shell_NotifyIconW(NIM_MODIFY, &d);
     }
 
@@ -202,6 +233,13 @@ sealed unsafe class TrayApp
         Item(menu, $"Connected mods: {_server.ControlClientCount}   (audio streams: {_server.AudioClientCount})", null, enabled: false);
         Item(menu, $"Radio stream listeners: {_radio.ListenerCount}", null, enabled: false);
         Item(menu, "Copy radio stream link", () => CopyToClipboard(_radio.Url));
+        Separator(menu);
+        var update = _updates.Snapshot();
+        Item(menu, $"MediaBridge v{BridgeServer.Version}", null, enabled: false);
+        if ((bool)update["available"]!)
+            Item(menu, $"Update available: v{(string?)update["latestVersion"]}", OpenRelease);
+        else
+            Item(menu, "View GitHub releases", () => OpenUrl(UpdateChecker.ReleasesPage));
         bool startup = IsStartupEnabled();
         Item(menu, "Start with Windows", () => SetStartup(!startup), isChecked: startup);
         Item(menu, "Open settings folder", () => System.Diagnostics.Process.Start("explorer.exe", Settings.DataDir));
@@ -251,6 +289,18 @@ sealed unsafe class TrayApp
         if (p == null) return;
         p.StandardInput.Write(text);
         p.StandardInput.Close();
+    }
+
+    static void OpenUrl(string url)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception ex) { Log.Write($"Could not open release page: {ex.Message}"); }
+    }
+
+    void OpenRelease()
+    {
+        var update = _updates.Snapshot();
+        OpenUrl((string?)update["releaseUrl"] ?? UpdateChecker.ReleasesPage);
     }
 
     static string Shorten(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "â€¦";

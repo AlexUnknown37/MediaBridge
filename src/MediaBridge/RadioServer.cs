@@ -24,6 +24,8 @@ sealed class RadioServer
     readonly LivePcmProvider _pcm = new(SampleRate, Channels);
     readonly List<LivePcmProvider> _wavFeeds = [];
     Thread? _encoderThread;
+    IMediaController? _media;
+    int _mediaPaused;
 
     public RadioServer(Settings settings, IAudioHub audio)
     {
@@ -33,7 +35,8 @@ sealed class RadioServer
         {
             _pcm.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate);
             lock (_wavFeeds)
-                foreach (var feed in _wavFeeds) feed.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate);
+                if (Volatile.Read(ref _mediaPaused) == 0)
+                    foreach (var feed in _wavFeeds) feed.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate);
         };
     }
 
@@ -49,7 +52,36 @@ sealed class RadioServer
     /// <summary>Set by Program: lets the control page at "/" run commands.</summary>
     public BridgeServer? Commands { get; set; }
     /// <summary>Set by Program: song info and cover art for the control page.</summary>
-    public IMediaController? Media { get; set; }
+    public IMediaController? Media
+    {
+        get => _media;
+        set
+        {
+            if (_media != null) _media.Changed -= OnMediaChanged;
+            _media = value;
+            if (_media == null) return;
+            _media.Changed += OnMediaChanged;
+            OnMediaChanged(_media.Snapshot());
+        }
+    }
+    /// <summary>Set by Program: release information shown on the control page.</summary>
+    public UpdateChecker? Updates { get; set; }
+
+    void OnMediaChanged(System.Text.Json.Nodes.JsonObject state)
+    {
+        bool paused = (string?)state["status"] == "paused";
+        int pausedState = paused ? 1 : 0;
+        lock (_wavFeeds)
+        {
+            if (Volatile.Read(ref _mediaPaused) == pausedState) return;
+            foreach (var feed in _wavFeeds) feed.SetPaused(paused);
+            // Publish the new capture state only after every feed has transitioned. The audio
+            // callback takes this same lock, so it cannot enqueue a resumed packet just before
+            // SetPaused(false) clears that feed's ring buffer.
+            Volatile.Write(ref _mediaPaused, pausedState);
+        }
+        Log.Write(paused ? "Radio stream held while MediaBridge is paused" : "Radio stream resumed at live audio");
+    }
 
     public void Start()
     {
@@ -149,7 +181,11 @@ sealed class RadioServer
         // Small lead: capture arrives in ~10 ms packets, so 60 ms is plenty and keeps the delay low.
         var feed = new LivePcmProvider(SampleRate, Channels, leadSeconds: 0.06);
         feed.Restart(stopWhen: () => _stop.IsCancellationRequested);
-        lock (_wavFeeds) _wavFeeds.Add(feed);
+        lock (_wavFeeds)
+        {
+            feed.SetPaused(Volatile.Read(ref _mediaPaused) != 0);
+            _wavFeeds.Add(feed);
+        }
         ListenersChanged?.Invoke();
         try
         {
@@ -201,6 +237,7 @@ sealed class RadioServer
             var devices = await Commands.ExecuteAsync("""{"cmd":"list_devices"}""");
             state["devices"] = devices?["devices"]?.DeepClone();
             state["radioUrl"] = WavUrl;
+            state["updates"] = Updates?.Snapshot();
             body = Encoding.UTF8.GetBytes(state.ToJsonString());
             type = "application/json";
         }
@@ -346,6 +383,7 @@ sealed class LivePcmProvider : IWaveProvider
     long _bytesDelivered;
     Func<bool> _stopWhen = () => false;
     readonly double _lead;
+    bool _paused;
 
     public LivePcmProvider(int sampleRate, int channels, double leadSeconds = 0.2)
     {
@@ -362,6 +400,23 @@ sealed class LivePcmProvider : IWaveProvider
         _stopWhen = stopWhen;
         _bytesDelivered = 0;
         _clock.Restart();
+    }
+
+    public void SetPaused(bool paused)
+    {
+        lock (_gate)
+        {
+            if (_paused == paused) return;
+            _paused = paused;
+            _read = 0;
+            _count = 0;
+            if (!paused)
+            {
+                // Re-anchor pacing at resume so the pause interval is never emitted as delayed silence.
+                _bytesDelivered = 0;
+                _clock.Restart();
+            }
+        }
     }
 
     /// <summary>Takes float stereo from the capture. (Only 48 kHz is passed through; other rates are resampled crudely.)</summary>
@@ -400,33 +455,50 @@ sealed class LivePcmProvider : IWaveProvider
         int want = Math.Min(buffer.Length, WaveFormat.AverageBytesPerSecond / 50);
         want -= want % WaveFormat.BlockAlign;
 
-        // Stay a little behind real time (200 ms by default), so the captured audio is always already waiting for us.
-        while (_bytesDelivered + want > (_clock.Elapsed.TotalSeconds - _lead) * WaveFormat.AverageBytesPerSecond)
+        // Keep the HTTP connection open without writing silence while the media session is paused.
+        // On resume, continue at live audio rather than making the game play the pause-length gap.
+        while (true)
         {
-            Thread.Sleep(5);
-            if (_stopWhen()) return 0;
-        }
-
-        lock (_gate)
-        {
-            // If capture got far ahead (clock drift), skip to keep latency low.
-            int maxBacklog = (int)(WaveFormat.AverageBytesPerSecond * Math.Max(0.25, _lead * 2.5)) / WaveFormat.BlockAlign * WaveFormat.BlockAlign;
-            if (_count > maxBacklog)
+            while (true)
             {
-                int drop = (_count - maxBacklog / 2) / WaveFormat.BlockAlign * WaveFormat.BlockAlign;
-                _read = (_read + drop) % _ring.Length;
-                _count -= drop;
+                lock (_gate)
+                    if (!_paused) break;
+                Thread.Sleep(10);
+                if (_stopWhen()) return 0;
             }
-            int take = Math.Min(want, _count / WaveFormat.BlockAlign * WaveFormat.BlockAlign);
-            // Not enough audio (silence, or music just started): put the silence first so the
-            // audio we do have flows straight into the next chunk without a gap.
-            int gap = want - take;
-            buffer[..gap].Clear();
-            for (int i = 0; i < take; i++) buffer[gap + i] = _ring[(_read + i) % _ring.Length];
-            _read = (_read + take) % _ring.Length;
-            _count -= take;
+
+            // Stay a little behind real time (200 ms by default), so the captured audio is already waiting.
+            while (_bytesDelivered + want > (_clock.Elapsed.TotalSeconds - _lead) * WaveFormat.AverageBytesPerSecond)
+            {
+                Thread.Sleep(5);
+                if (_stopWhen()) return 0;
+                lock (_gate)
+                    if (_paused) break;
+            }
+
+            lock (_gate)
+            {
+                // Pause can arrive after the timing wait but before this lock. Don't write
+                // stale audio (or synthetic silence); wait for SetPaused(false) to re-anchor us.
+                if (_paused) continue;
+                // If capture got far ahead (clock drift), skip to keep latency low.
+                int maxBacklog = (int)(WaveFormat.AverageBytesPerSecond * Math.Max(0.25, _lead * 2.5)) / WaveFormat.BlockAlign * WaveFormat.BlockAlign;
+                if (_count > maxBacklog)
+                {
+                    int drop = (_count - maxBacklog / 2) / WaveFormat.BlockAlign * WaveFormat.BlockAlign;
+                    _read = (_read + drop) % _ring.Length;
+                    _count -= drop;
+                }
+                int take = Math.Min(want, _count / WaveFormat.BlockAlign * WaveFormat.BlockAlign);
+                // Not enough audio: put silence first so available audio flows directly into the next chunk.
+                int gap = want - take;
+                buffer[..gap].Clear();
+                for (int i = 0; i < take; i++) buffer[gap + i] = _ring[(_read + i) % _ring.Length];
+                _read = (_read + take) % _ring.Length;
+                _count -= take;
+                _bytesDelivered += want;
+                return want;
+            }
         }
-        _bytesDelivered += want;
-        return want;
     }
 }

@@ -23,7 +23,8 @@ static class Program
         if (!OperatingSystem.IsWindows()) Linux.PulseAudioHub.EnsureVirtualSink();
         var (media, audio) = CreatePlatform();
         var server = new BridgeServer(settings, media, audio);
-        var radio = new RadioServer(settings, audio) { Commands = server, Media = media };
+        var updates = new UpdateChecker();
+        var radio = new RadioServer(settings, audio) { Commands = server, Media = media, Updates = updates };
         var script = new ScriptBridge(media, audio);
 
         try
@@ -62,10 +63,11 @@ static class Program
         });
 
         script.Start();
+        updates.Start();
         WriteDiscoveryInfo(settings, radio.Url, radio.WavUrl);
 
 #if WINDOWS
-        new TrayApp(settings, (MediaController)media, (AudioHub)audio, server, radio).Run();
+        new TrayApp(settings, (MediaController)media, (AudioHub)audio, server, radio, updates).Run();
 #else
         Console.WriteLine($"MediaBridge {BridgeServer.Version} running. Control page: http://127.0.0.1:{settings.RadioPort}/  (Ctrl+C to quit)");
         WaitForExitSignal();

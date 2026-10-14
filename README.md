@@ -33,7 +33,7 @@ Now only your music goes into the cable. Game sounds and Discord stay separate.
 
 ### 3. Run MediaBridge
 
-Double-click `MediaBridge.exe`. A green music-note icon appears in the tray (bottom-right, maybe under the `^` arrow).
+Double-click `MediaBridge.exe`. A green music-note icon appears in the tray (bottom-right, maybe under the `^` arrow). The tray menu shows the installed version and reports when a newer packaged GitHub release is available. The control page also displays an update link.
 Click it to:
 - check what's playing, and play/pause/skip
 - **Listen to:** pick the device. Choose **CABLE Input** (marked "recommended"). MediaBridge picks it automatically if it finds it.
