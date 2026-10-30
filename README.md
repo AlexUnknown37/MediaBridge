@@ -60,8 +60,62 @@ Linux needs no VB-Cable: MediaBridge creates its own virtual speaker called **Me
    (`./MediaBridge --uninstall` removes it; `./MediaBridge --status` shows whether it's running.)
 3. Open <http://127.0.0.1:48902/> in a browser:
    - **Listen to:** pick **MediaBridge**. It's picked automatically.
-   - **Send these apps here automatically:** tick it and type `spotify`. From then on, Spotify plays into MediaBridge by itself, even in Game Mode.
+   - **Send these apps here automatically:** tick it and type `spotify` (or more, e.g. `spotify, firefox`; see [the list below](#sending-apps-to-mediabridge-automatically)). From then on, those apps play into MediaBridge by themselves, even in Game Mode.
    - **Also play it on my speakers:** tick it if you want to hear the music outside games.
+
+### Sending apps to MediaBridge automatically
+
+The **Send these apps here automatically** box takes words, separated by commas (e.g. `spotify, firefox`). It doesn't need an app's exact name.
+
+When an app starts playing sound, it opens an audio stream with a few names on it (app name, program, and Flatpak ID if it has one). For Chrome that's `Google Chrome`, `chrome` and `com.google.Chrome`. If **any of your words appears anywhere in those names** (upper/lower case doesn't matter), MediaBridge moves that app's sound into the MediaBridge speaker. It checks when it starts, when you change the list, and every time an app starts a new sound.
+
+Common music apps and the word to type:
+
+| App | Word |
+|---|---|
+| Spotify | `spotify` |
+| Firefox (YouTube Music, SoundCloud, ...) | `firefox` |
+| Google Chrome | `chrome` |
+| Brave | `brave` |
+| Microsoft Edge | `msedge` |
+| Vivaldi | `vivaldi` |
+| Opera | `opera` |
+| VLC | `vlc` |
+| Strawberry | `strawberry` |
+| Elisa | `elisa` |
+| Rhythmbox | `rhythmbox` |
+| Audacious | `audacious` |
+| Amberol | `amberol` |
+| Tidal (tidal-hifi) | `tidal` |
+| Plexamp | `plexamp` |
+| Cider (Apple Music) | `cider` |
+
+**Finding the word for another app:** make the app play something (it has no sound stream until it does), then run:
+
+```bash
+pactl list sink-inputs | grep -E "application.name|application.process.binary|portal.app_id"
+```
+
+Pick a word that only that app has. Usually its name works best.
+
+**Don't use a word that's too general.** It matches anywhere, so it can grab apps you didn't mean. For example `chromium` also matches Steam's own interface (`steamwebhelper` is built on Chromium), which sends Steam's sounds into the game. Check that your word doesn't also appear in Steam's, Discord's or the game's lines. If something ends up in the wrong place, edit or untick the list on the control page and the apps go back to your speakers.
+
+### Sending an app to MediaBridge by hand
+
+You can also skip the list and move an app yourself. Start playing music in the app first (it only shows up while it's making sound), then pick one way:
+
+- **KDE desktop (Steam Deck Desktop Mode):** click the speaker icon in the taskbar → **Applications** tab → next to your music app, pick **MediaBridge** as the output.
+  Or: System Settings → Sound → **Applications** → your app → **MediaBridge**.
+- **GNOME and other desktops:** install **pavucontrol** (Volume Control) → **Playback** tab → next to your music app, pick **MediaBridge**.
+- **Terminal:** find the app's stream number, then move it:
+  ```bash
+  pactl list short sink-inputs
+  pactl move-sink-input <number> MediaBridge
+  ```
+  The number changes every time the app starts a new sound, so this is mostly for testing.
+
+To undo, pick your speakers or headphones again the same way.
+Your desktop usually remembers the choice for that app next time, but not always, and there's no app picker in Game Mode. For music you play while gaming, the automatic list above is more reliable.
 
 Needs: PipeWire or PulseAudio (`pactl`, `pacat`) and systemd (`busctl`). SteamOS and most desktops have all of these.
 Music apps are found through MPRIS, the standard Linux media controls (Spotify, Firefox, Chrome, VLC, ...).
@@ -159,4 +213,7 @@ docs/PROTOCOL.md      everything a mod needs to know
 
 ## Support
 
-If you enjoy this project, you can support me on Ko-fi: [https://ko-fi.com/alexjustalex](https://ko-fi.com/alexjustalex)
+If you enjoy this project, you can support me here:
+- Ko-fi: [https://ko-fi.com/alexjustalex](https://ko-fi.com/alexjustalex)
+- Patreon: [https://patreon.com/AlexanderVazquez](https://patreon.com/AlexanderVazquez)
+- GitHub: [https://github.com/AlexUnknown37](https://github.com/AlexUnknown37)
