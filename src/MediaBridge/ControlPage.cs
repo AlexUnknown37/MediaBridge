@@ -17,6 +17,7 @@ static class ControlPage
   :root { --bg:#f6f7f8; --card:#fff; --text:#16181d; --muted:#5f6670; --line:#d9dde3; --accent:#1eb96e; }
   @media (prefers-color-scheme: dark) { :root { --bg:#14161a; --card:#1d2026; --text:#eceef2; --muted:#9aa1ad; --line:#2e333b; } }
   * { box-sizing: border-box; }
+  [hidden] { display:none !important; } /* section's display:grid would otherwise show hidden sections */
   body { margin:0; background:var(--bg); color:var(--text); font:15px/1.45 system-ui, sans-serif; }
   main { max-width:520px; margin:0 auto; padding:16px; display:grid; gap:12px; }
   h1 { font-size:18px; margin:4px 0; display:flex; align-items:center; gap:8px; }
