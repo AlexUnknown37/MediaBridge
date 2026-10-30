@@ -23,7 +23,8 @@ sealed class MprisMediaController : IMediaController
     string _lastFingerprint = "";
     byte[]? _artwork;
     string? _artworkMime;
-    string? _artUrl;
+    string? _artKey;          // what the current cover was loaded for (see Refresh)
+    string? _loggedArtUrl;    // log each cover URL's outcome once
     string? _player;             // e.g. org.mpris.MediaPlayer2.spotify
     readonly CancellationTokenSource _stop = new();
 
@@ -125,7 +126,13 @@ sealed class MprisMediaController : IMediaController
             state["positionUpdatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }
 
-        if (artUrl != _artUrl) LoadArtwork(artUrl);
+        // Sandboxed apps (Chrome Flatpak) reuse one temp file name for every song, so for file:// covers the song
+        // is part of the key; a file that wasn't readable yet is retried on the next refresh.
+        bool isFile = artUrl?.StartsWith("file://") == true;
+        string? artKey = isFile ? $"{artUrl}|{state["title"]}|{state["artist"]}" : artUrl;
+        bool retryFile;
+        lock (_gate) retryFile = isFile && _artwork == null;
+        if (artKey != _artKey || retryFile) { _artKey = artKey; LoadArtwork(artUrl); }
         lock (_gate) state["artworkId"] = _artwork == null ? null : Convert.ToHexString(SHA256.HashData(_artwork))[..16].ToLowerInvariant();
 
         // Only announce real changes (position moves every second while playing; mods compute that themselves).
@@ -139,14 +146,13 @@ sealed class MprisMediaController : IMediaController
 
     void LoadArtwork(string? url)
     {
-        _artUrl = url;
         byte[]? data = null;
         string? mime = null;
         try
         {
             if (url != null && url.StartsWith("file://"))
             {
-                data = File.ReadAllBytes(new Uri(url).LocalPath);
+                data = ReadCoverFile(new Uri(url).LocalPath, url);
             }
             else if (url != null && (url.StartsWith("https://") || url.StartsWith("http://")))
             {
@@ -161,6 +167,29 @@ sealed class MprisMediaController : IMediaController
         catch (Exception ex) { Log.Write($"Artwork download failed: {ex.Message}"); }
         if (data != null) mime ??= data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8 ? "image/jpeg" : "image/png";
         lock (_gate) { _artwork = data; _artworkMime = mime; }
+    }
+
+    /// <summary>
+    /// A cover file named by a file:// URL. Flatpak apps (Chrome) write it into their sandboxed /tmp, which the host
+    /// only sees as /proc/&lt;pid&gt;/root/tmp of one of the app's processes. The D-Bus name's owner can't be used:
+    /// for Flatpak apps it is xdg-dbus-proxy, which runs outside the sandbox. So check our processes' roots for the
+    /// file (only runs when the cover changes). Returns null (and logs once per URL) if no copy is readable.
+    /// </summary>
+    byte[]? ReadCoverFile(string path, string url)
+    {
+        if (File.Exists(path)) return File.ReadAllBytes(path);
+        foreach (var dir in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!Path.GetFileName(dir).All(char.IsAsciiDigit)) continue;
+            string sandboxed = $"{dir}/root{path}"; // other users' processes just aren't readable (Exists = false)
+            if (!File.Exists(sandboxed)) continue;
+            if (_loggedArtUrl != url) Log.Write($"Cover {url} read from the app's sandbox: {sandboxed}");
+            _loggedArtUrl = url;
+            return File.ReadAllBytes(sandboxed);
+        }
+        if (_loggedArtUrl != url) Log.Write($"Cover {url} not found on the host or in any app sandbox");
+        _loggedArtUrl = url;
+        return null;
     }
 
     string? GetString(string player, string prop) =>
