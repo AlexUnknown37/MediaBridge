@@ -12,7 +12,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>MediaBridge</AssemblyName>
-    <Version>0.3.2</Version>
+    <Version>0.3.3</Version>
     <InvariantGlobalization>true</InvariantGlobalization>
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
   </PropertyGroup>
