@@ -79,6 +79,9 @@ sealed unsafe class TrayApp
         Shell_NotifyIconW(NIM_DELETE, &data);
     }
 
+    /// <summary>Same as the tray menu's Exit, from any thread (the control page's Quit button).</summary>
+    public void RequestQuit() => OnUi(DestroyWindowAndQuit);
+
     /// <summary>Runs an action on the tray's thread (events arrive from background threads).</summary>
     void OnUi(Action action)
     {

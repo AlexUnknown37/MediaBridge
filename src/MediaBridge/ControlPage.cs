@@ -37,6 +37,8 @@ static class ControlPage
   .row { display:flex; justify-content:space-between; gap:8px; }
   #err { color:#d9534f; font-size:13px; min-height:1em; }
   #updateLink { color:var(--accent); font-weight:600; }
+  button.quit { background:#c62828; border-color:#c62828; color:#fff; font-weight:600; }
+  button.quit:hover { background:#a51f1f; border-color:#a51f1f; }
 </style>
 </head>
 <body>
@@ -81,6 +83,10 @@ static class ControlPage
     <h2>Radio stream for games</h2>
     <code id="radio"></code>
     <div class="muted">Point a game's internet radio (or an .m3u8 playlist) at this link.</div>
+  </section>
+
+  <section>
+    <button class="quit" onclick="quitApp()">Quit MediaBridge</button>
   </section>
   <div id="err"></div>
 </main>
@@ -149,7 +155,17 @@ async function refresh() {
     document.getElementById('err').textContent = '';
   } catch (e) { document.getElementById('err').textContent = 'MediaBridge is not running.'; }
 }
-refresh(); setInterval(refresh, 1000);
+refresh();
+const refreshTimer = setInterval(refresh, 1000);
+
+async function quitApp() {
+  if (!confirm('Quit MediaBridge?\n\nGames will stop getting your music and controls until you start MediaBridge again.')) return;
+  try {
+    await fetch('/api/quit', { method:'POST', headers:{'X-MediaBridge':'1'} });
+  } catch (e) { /* it may close before answering */ }
+  clearInterval(refreshTimer);
+  document.getElementById('err').textContent = 'MediaBridge is closed. Start it again to use this page.';
+}
 </script>
 </body>
 </html>

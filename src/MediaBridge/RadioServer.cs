@@ -64,6 +64,8 @@ sealed class RadioServer
             OnMediaChanged(_media.Snapshot());
         }
     }
+    /// <summary>Set by Program: shuts MediaBridge down (the control page's Quit button).</summary>
+    public Action? Quit { get; set; }
     /// <summary>Set by Program: release information shown on the control page.</summary>
     public UpdateChecker? Updates { get; set; }
 
@@ -240,6 +242,16 @@ sealed class RadioServer
             state["updates"] = Updates?.Snapshot();
             body = Encoding.UTF8.GetBytes(state.ToJsonString());
             type = "application/json";
+        }
+        else if (path == "/api/quit" && firstLine.StartsWith("POST ") && Quit != null
+                 && request.Contains("\r\nX-MediaBridge:", StringComparison.OrdinalIgnoreCase))
+        {
+            // Only the control page can quit (mods' control port can't); reply first, then shut down.
+            Log.Write("Quit requested from the control page");
+            body = "{\"ok\":true}"u8.ToArray();
+            type = "application/json";
+            var quit = Quit;
+            _ = Task.Delay(300).ContinueWith(_ => quit());
         }
         else if (path == "/api/cmd" && firstLine.StartsWith("POST ") && Commands != null
                  // A custom header can't be sent cross-site without permission, so other websites can't drive this.

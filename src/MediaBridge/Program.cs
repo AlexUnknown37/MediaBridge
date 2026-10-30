@@ -67,8 +67,11 @@ static class Program
         WriteDiscoveryInfo(settings, radio.Url, radio.WavUrl);
 
 #if WINDOWS
-        new TrayApp(settings, (MediaController)media, (AudioHub)audio, server, radio, updates).Run();
+        var tray = new TrayApp(settings, (MediaController)media, (AudioHub)audio, server, radio, updates);
+        radio.Quit = tray.RequestQuit;
+        tray.Run();
 #else
+        radio.Quit = Exit.Set;
         Console.WriteLine($"MediaBridge {BridgeServer.Version} running. Control page: http://127.0.0.1:{settings.RadioPort}/  (Ctrl+C to quit)");
         WaitForExitSignal();
 #endif
@@ -90,13 +93,14 @@ static class Program
 #endif
     }
 
-    /// <summary>Linux: run until Ctrl+C or until systemd stops us.</summary>
+    /// <summary>Linux: set by Ctrl+C, systemd stopping us, or the control page's Quit button.</summary>
+    static readonly ManualResetEventSlim Exit = new();
+
     static void WaitForExitSignal()
     {
-        using var exit = new ManualResetEventSlim();
-        using var term = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; exit.Set(); });
-        using var intr = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx => { ctx.Cancel = true; exit.Set(); });
-        exit.Wait();
+        using var term = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; Exit.Set(); });
+        using var intr = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx => { ctx.Cancel = true; Exit.Set(); });
+        Exit.Wait();
     }
 
     /// <summary>
