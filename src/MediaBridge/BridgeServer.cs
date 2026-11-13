@@ -124,6 +124,8 @@ sealed class BridgeServer
                 if (line == null) break;
                 if (line.Length == 0) continue;
                 if (line.Length > 64 * 1024) break; // nobody legit sends this much
+                // A web page can POST to this port; hang up at its request line, before any JSON in the body runs.
+                if (!line.StartsWith('{') && line.Contains(" HTTP/")) break;
                 var reply = await HandleCommand(client, line);
                 if (reply != null) client.Send(reply);
             }

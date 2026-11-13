@@ -25,8 +25,27 @@ sealed class ScriptBridge
     public const string LinuxSharedDir = "/tmp/MediaBridge";
 
     /// <summary>Where nowplaying.txt (and on Linux, commands.txt) live.</summary>
-    static readonly string[] Dirs = OperatingSystem.IsWindows() ? [Settings.DataDir] : [Settings.DataDir, LinuxSharedDir];
+    public static readonly string[] Dirs =
+        OperatingSystem.IsWindows() || !SharedDirIsOurs() ? [Settings.DataDir] : [Settings.DataDir, LinuxSharedDir];
 
+    /// <summary>
+    /// /tmp is shared by every user of the PC. If someone else made our folder first (or it's a link), files in
+    /// it could be links to anywhere, and writing them would overwrite whatever they point at. So skip it then.
+    /// </summary>
+    static bool SharedDirIsOurs()
+    {
+        try
+        {
+            Directory.CreateDirectory(LinuxSharedDir);
+            if (new DirectoryInfo(LinuxSharedDir).LinkTarget == null
+                && Linux.Proc.Run("stat", "-c", "%U", LinuxSharedDir)?.Trim() == Environment.UserName) return true;
+        }
+        catch { }
+        Log.Write($"{LinuxSharedDir} belongs to someone else (or is a link); not using it");
+        return false;
+    }
+
+    readonly Settings _settings;
     readonly IMediaController _media;
     readonly IAudioHub _audio;
     readonly CancellationTokenSource _stop = new();
@@ -34,8 +53,9 @@ sealed class ScriptBridge
     readonly object _writeGate = new();
     string? _lastText;
 
-    public ScriptBridge(IMediaController media, IAudioHub audio)
+    public ScriptBridge(Settings settings, IMediaController media, IAudioHub audio)
     {
+        _settings = settings;
         _media = media;
         _audio = audio;
         _media.Changed += WriteNowPlaying;
@@ -157,8 +177,8 @@ sealed class ScriptBridge
         {
             case "play" or "pause" or "play_pause" or "stop" or "next" or "previous":
                 await _media.SendAsync(cmd); break;
-            case "volume_up": _audio.StepVolume(0.05f); break;
-            case "volume_down": _audio.StepVolume(-0.05f); break;
+            case "volume_up": _audio.StepVolume(_settings.VolumeStep); break;
+            case "volume_down": _audio.StepVolume(-_settings.VolumeStep); break;
             case "toggle_mute": _audio.SetMute(null); break;
         }
     }

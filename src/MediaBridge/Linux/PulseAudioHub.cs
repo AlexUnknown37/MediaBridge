@@ -44,6 +44,20 @@ sealed class PulseAudioHub : IAudioHub
         StartEventWatcher();
     }
 
+    /// <summary>
+    /// After a crash or kill, the "also play on my speakers" loopback from SetListen is still loaded; starting
+    /// another on top would play the music twice. Ours are recognised by the arguments SetListen gives them.
+    /// </summary>
+    static void UnloadStaleLoopbacks()
+    {
+        foreach (var line in (Proc.Run("pactl", "list", "short", "modules") ?? "").Split('\n'))
+        {
+            var parts = line.Split('\t'); // index, name, arguments
+            if (parts.Length >= 3 && parts[1] == "module-loopback" && parts[2].Contains(".monitor sink=@DEFAULT_SINK@ latency_msec=60"))
+                Proc.Run("pactl", "unload-module", parts[0]);
+        }
+    }
+
     // ---------------- devices ----------------
 
     record Device(string Kind, string Name, string Description, double Volume, bool Muted);
@@ -135,6 +149,7 @@ sealed class PulseAudioHub : IAudioHub
 
     public void SelectInitial(string? savedId)
     {
+        UnloadStaleLoopbacks(); // here, not in the constructor: by now the ports are ours, so no other copy is running
         if (savedId != null && TrySelect(savedId)) return;
         if (TrySelect($"sink:{VirtualSinkName}")) return;
         var def = Proc.Run("pactl", "get-default-sink")?.Trim();
@@ -157,6 +172,7 @@ sealed class PulseAudioHub : IAudioHub
             StartCaptureLocked();
         }
         if (_routeApps.Count > 0) RouteNow();
+        if (_loopbackModule != null) { SetListen(false); SetListen(true); } // it was copying the old device
         _lastVolumeKey = "";
         DeviceChanged?.Invoke(DeviceInfo());
         VolumeChanged?.Invoke(VolumeInfo());
@@ -405,6 +421,7 @@ sealed class PulseAudioHub : IAudioHub
             _retryTimer?.Dispose();
             StopCaptureLocked();
         }
+        SetRouteApps([]); // send routed apps back to the real speakers, or they'd keep playing where nobody hears them
         SetListen(false);
         try { _events?.Kill(); } catch { }
     }

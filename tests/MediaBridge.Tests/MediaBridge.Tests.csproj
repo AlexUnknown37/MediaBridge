@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Run with: dotnet test tests/MediaBridge.Tests -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);CA1416;CS0067</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The app is a self-contained .exe, which a test project can't reference, so its source is compiled in
+         here instead (the same files as the Linux build, minus Main). -->
+    <Compile Include="..\..\src\MediaBridge\**\*.cs"
+             Exclude="..\..\src\MediaBridge\obj\**;..\..\src\MediaBridge\bin\**;..\..\src\MediaBridge\AudioHub.cs;..\..\src\MediaBridge\MediaController.cs;..\..\src\MediaBridge\TrayApp.cs;..\..\src\MediaBridge\Win32.cs;..\..\src\MediaBridge\Program.cs" />
+    <PackageReference Include="NAudio.Wasapi" Version="3.1.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

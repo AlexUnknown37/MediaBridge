@@ -57,6 +57,4 @@ static class Proc
             return null;
         }
     }
-
-    public static bool Exists(string file) => Run("sh", "-c", $"command -v {file}") != null;
 }

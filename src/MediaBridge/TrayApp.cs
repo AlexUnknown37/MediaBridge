@@ -207,7 +207,7 @@ sealed unsafe class TrayApp
         var title = (string?)m["title"];
         Item(menu, string.IsNullOrEmpty(title)
             ? "Nothing playing"
-            : $"{((string?)m["status"] == "playing" ? "â–¶" : "âšâš")}  {Shorten(title, 40)} â€” {Shorten((string?)m["artist"] ?? "", 30)}",
+            : $"{((string?)m["status"] == "playing" ? "▶" : "❚❚")}  {Shorten(title, 40)} — {Shorten((string?)m["artist"] ?? "", 30)}",
             null, enabled: false);
         Item(menu, "Previous", () => _ = _media.SendAsync("previous"));
         Item(menu, "Play / Pause", () => _ = _media.SendAsync("play_pause"));
@@ -235,7 +235,7 @@ sealed unsafe class TrayApp
 
         Item(menu, $"Connected mods: {_server.ControlClientCount}   (audio streams: {_server.AudioClientCount})", null, enabled: false);
         Item(menu, $"Radio stream listeners: {_radio.ListenerCount}", null, enabled: false);
-        Item(menu, "Copy radio stream link", () => CopyToClipboard(_radio.Url));
+        Item(menu, "Copy radio stream link", () => CopyToClipboard(_radio.WavUrl));
         Separator(menu);
         var update = _updates.Snapshot();
         Item(menu, $"MediaBridge v{BridgeServer.Version}", null, enabled: false);
@@ -267,7 +267,7 @@ sealed unsafe class TrayApp
             if ((string?)d!["kind"] != kind) continue;
             var id = (string)d["id"]!;
             var name = (string)d["name"]!;
-            if ((bool)d["isVirtualCable"]! && kind == "output") name += "   â† recommended";
+            if ((bool)d["isVirtualCable"]! && kind == "output") name += "   ← recommended";
             Item(menu, name, () =>
             {
                 if (!_audio.TrySelect(id)) return;
@@ -306,7 +306,7 @@ sealed unsafe class TrayApp
         OpenUrl((string?)update["releaseUrl"] ?? UpdateChecker.ReleasesPage);
     }
 
-    static string Shorten(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "â€¦";
+    static string Shorten(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
 
     static bool IsStartupEnabled()
     {

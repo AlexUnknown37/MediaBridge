@@ -16,7 +16,8 @@ sealed class MprisMediaController : IMediaController
     const string ObjPath = "/org/mpris/MediaPlayer2";
     const string PlayerIface = "org.mpris.MediaPlayer2.Player";
 
-    static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(5) };
+    const int MaxCoverBytes = 10_000_000; // a cover is a few hundred KB; a player pointing at something huge is broken
+    static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(5), MaxResponseContentBufferSize = MaxCoverBytes };
 
     readonly object _gate = new();
     JsonObject _state = EmptyState();
@@ -32,8 +33,8 @@ sealed class MprisMediaController : IMediaController
 
     public Task StartAsync()
     {
-        if (Proc.Run("busctl", "--version") == null)
-            throw new InvalidOperationException("busctl was not found; media controls need systemd's busctl.");
+        if (Proc.Run("busctl", "--version") == null) // a failed task, not a throw: Program only logs it and audio still works
+            return Task.FromException(new InvalidOperationException("busctl was not found; media controls need systemd's busctl."));
         _ = Task.Run(PollLoop);
         return Task.CompletedTask;
     }
@@ -77,6 +78,7 @@ sealed class MprisMediaController : IMediaController
         var json = Busctl("--user", "call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames");
         var names = json?["data"]?[0]?.AsArray().Select(n => (string?)n).Where(n => n != null && n.StartsWith(Prefix)).ToList();
         if (names == null || names.Count == 0) return null;
+        if (names.Count == 1) return names[0]; // nothing to choose between; saves a busctl call every second
 
         var playing = names.Where(n => GetString(n!, "PlaybackStatus") == "Playing").ToList();
         return playing.FirstOrDefault(n => n!.Contains("spotify", StringComparison.OrdinalIgnoreCase))
@@ -177,7 +179,7 @@ sealed class MprisMediaController : IMediaController
     /// </summary>
     byte[]? ReadCoverFile(string path, string url)
     {
-        if (File.Exists(path)) return File.ReadAllBytes(path);
+        if (File.Exists(path)) return ReadCapped(path);
         foreach (var dir in Directory.EnumerateDirectories("/proc"))
         {
             if (!Path.GetFileName(dir).All(char.IsAsciiDigit)) continue;
@@ -185,11 +187,26 @@ sealed class MprisMediaController : IMediaController
             if (!File.Exists(sandboxed)) continue;
             if (_loggedArtUrl != url) Log.Write($"Cover {url} read from the app's sandbox: {sandboxed}");
             _loggedArtUrl = url;
-            return File.ReadAllBytes(sandboxed);
+            return ReadCapped(sandboxed);
         }
         if (_loggedArtUrl != url) Log.Write($"Cover {url} not found on the host or in any app sandbox");
         _loggedArtUrl = url;
         return null;
+    }
+
+    /// <summary>The file's bytes, or null if it is bigger than a cover can be (also stops endless files like /dev/zero).</summary>
+    static byte[]? ReadCapped(string path)
+    {
+        using var file = File.OpenRead(path);
+        var data = new MemoryStream();
+        var buf = new byte[81920];
+        int n;
+        while ((n = file.Read(buf)) > 0)
+        {
+            if (data.Length + n > MaxCoverBytes) return null;
+            data.Write(buf, 0, n);
+        }
+        return data.ToArray();
     }
 
     string? GetString(string player, string prop) =>

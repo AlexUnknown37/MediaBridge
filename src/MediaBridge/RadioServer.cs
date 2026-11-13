@@ -33,7 +33,7 @@ sealed class RadioServer
         _audio = audio;
         _audio.AudioAvailable += (buf, count) =>
         {
-            _pcm.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate);
+            if (HasListeners()) _pcm.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate); // MP3 only
             lock (_wavFeeds)
                 if (Volatile.Read(ref _mediaPaused) == 0)
                     foreach (var feed in _wavFeeds) feed.AddFloatStereo(buf.AsSpan(0, count), _audio.SampleRate);
@@ -128,8 +128,10 @@ sealed class RadioServer
             var firstLine = request.Split("\r\n", 2)[0];
             var path = firstLine.Split(' ').ElementAtOrDefault(1) ?? "/";
 
-            // The control page and its small API. Everything else is the audio stream.
-            if (path == "/" || path.StartsWith("/api/") || path.StartsWith("/artwork"))
+            // The control page and its small API. Only .mp3/.wav addresses are the audio stream;
+            // anything else (a browser's /favicon.ico) gets "not found" from ServePage.
+            bool isStream = path.Contains(".mp3", StringComparison.OrdinalIgnoreCase) || path.Contains(".wav", StringComparison.OrdinalIgnoreCase);
+            if (path == "/" || path.StartsWith("/api/") || path.StartsWith("/artwork") || !isStream)
             {
                 await ServePage(stream, firstLine, path, request);
                 tcp.Close();
@@ -182,7 +184,8 @@ sealed class RadioServer
     {
         // Small lead: capture arrives in ~10 ms packets, so 60 ms is plenty and keeps the delay low.
         var feed = new LivePcmProvider(SampleRate, Channels, leadSeconds: 0.06);
-        feed.Restart(stopWhen: () => _stop.IsCancellationRequested);
+        // While paused nothing is written, so a write can't notice the game hanging up; ask the socket.
+        feed.Restart(stopWhen: () => _stop.IsCancellationRequested || HungUp(tcp));
         lock (_wavFeeds)
         {
             feed.SetPaused(Volatile.Read(ref _mediaPaused) != 0);
@@ -216,11 +219,29 @@ sealed class RadioServer
         }
     }
 
+    static bool HungUp(TcpClient tcp)
+    {
+        try { return tcp.Client.Poll(0, SelectMode.SelectRead) && tcp.Client.Available == 0; }
+        catch { return true; }
+    }
+
+    /// <summary>
+    /// Browsers say which site they think they're talking to. A hostile site can point its own name at
+    /// 127.0.0.1 ("DNS rebinding") to get past the X-MediaBridge check, so only our own address is served.
+    /// </summary>
+    bool HostIsLocal(string request)
+    {
+        var host = request.Split("\r\n").FirstOrDefault(l => l.StartsWith("Host:", StringComparison.OrdinalIgnoreCase))?[5..].Trim();
+        return host == null || host == $"127.0.0.1:{_settings.RadioPort}"
+            || host.Equals($"localhost:{_settings.RadioPort}", StringComparison.OrdinalIgnoreCase);
+    }
+
     async Task ServePage(NetworkStream stream, string firstLine, string path, string request)
     {
         byte[] body;
         string type;
         int status = 200;
+        if (!HostIsLocal(request)) path = "/not-ours"; // falls through to "not found"
         if (path == "/")
         {
             body = Encoding.UTF8.GetBytes(ControlPage.Html);
@@ -280,7 +301,7 @@ sealed class RadioServer
         var already = request[(split + 4)..];
         var lengthLine = request.Split("\r\n").FirstOrDefault(l => l.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase));
         int length = int.TryParse(lengthLine?.Split(':', 2)[1].Trim(), out var n) ? Math.Min(n, 64 * 1024) : already.Length;
-        var bytes = new List<byte>(Encoding.UTF8.GetBytes(already));
+        var bytes = new List<byte>(Encoding.Latin1.GetBytes(already)); // Latin1 gives back the exact bytes read
         var buf = new byte[4096];
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         while (bytes.Count < length)
@@ -302,7 +323,7 @@ sealed class RadioServer
             int n = await stream.ReadAsync(buf.AsMemory(len), timeout.Token);
             if (n == 0) return null;
             len += n;
-            var text = Encoding.ASCII.GetString(buf, 0, len);
+            var text = Encoding.Latin1.GetString(buf, 0, len); // one char per byte, so a UTF-8 body survives (see ReadBody)
             if (text.Contains("\r\n\r\n")) return text;
         }
         return null;

@@ -25,14 +25,14 @@ static class Program
         var server = new BridgeServer(settings, media, audio);
         var updates = new UpdateChecker();
         var radio = new RadioServer(settings, audio) { Commands = server, Media = media, Updates = updates };
-        var script = new ScriptBridge(media, audio);
+        var script = new ScriptBridge(settings, media, audio);
 
         try
         {
             server.Start();
             radio.Start();
         }
-        catch (System.Net.Sockets.SocketException ex)
+        catch (Exception ex) when (ex is System.Net.Sockets.SocketException or ArgumentOutOfRangeException) // in use, or not a port number
         {
             var text = $"MediaBridge could not open port {settings.ControlPort}, {settings.AudioPort} or {settings.RadioPort}.\n" +
                        $"Another program may be using it.\n\n{ex.Message}";
@@ -141,8 +141,7 @@ static class Program
             ["os"] = OperatingSystem.IsWindows() ? "windows" : "linux",
         }.ToJsonString(new() { WriteIndented = true });
 
-        string[] dirs = OperatingSystem.IsWindows() ? [Settings.DataDir] : [Settings.DataDir, ScriptBridge.LinuxSharedDir];
-        foreach (var dir in dirs)
+        foreach (var dir in ScriptBridge.Dirs)
         {
             try
             {

@@ -89,6 +89,8 @@ static class Log
             try
             {
                 Directory.CreateDirectory(Settings.DataDir);
+                // A repeating error must not fill the disk while we run for weeks as a service.
+                if (new FileInfo(FilePath) is { Exists: true, Length: > 1_000_000 }) StartNewSession();
                 File.AppendAllText(FilePath, line + Environment.NewLine);
             }
             catch { /* logging must never crash the tool */ }
